@@ -1,13 +1,15 @@
-from openai import OpenAI
 from llama_index.readers.file import PDFReader
 from llama_index.core.node_parser import SentenceSplitter
 from dotenv import load_dotenv
+import os
+from ollama import Client as OllamaClient
 
 load_dotenv()
 
-client = OpenAI()
-EMBED_MODEL = "text-embedding-3-large"
-EMBED_DIM = 3072
+# Using Ollama exclusively
+client = OllamaClient(host=os.getenv("OLLAMA_HOST", "http://localhost:11434"))
+EMBED_MODEL = "nomic-embed-text"
+EMBED_DIM = 768
 
 splitter = SentenceSplitter(chunk_size=1000, chunk_overlap=200)
 
@@ -21,8 +23,9 @@ def load_and_chunk_pdf(path: str):
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
-    response = client.embeddings.create(
-        model=EMBED_MODEL,
-        input=texts,
-    )
-    return [item.embedding for item in response.data]
+    """Generate embeddings using Ollama's nomic-embed-text model"""
+    embeddings = []
+    for text in texts:
+        response = client.embeddings(model=EMBED_MODEL, prompt=text)
+        embeddings.append(response['embedding'])
+    return embeddings

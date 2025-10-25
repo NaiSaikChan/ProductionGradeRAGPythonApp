@@ -2,11 +2,11 @@ import logging
 from fastapi import FastAPI
 import inngest
 import inngest.fast_api
-from inngest.experimental import ai
 from dotenv import load_dotenv
 import uuid
 import os
 import datetime
+from ollama import Client as OllamaClient
 from data_loader import load_and_chunk_pdf, embed_texts
 from vector_db import QdrantStorage
 from custom_types import RAQQueryResult, RAGSearchResult, RAGUpsertResult, RAGChunkAndSrc
@@ -24,7 +24,7 @@ inngest_client = inngest.Inngest(
     fn_id="RAG: Ingest PDF",
     trigger=inngest.TriggerEvent(event="rag/ingest_pdf"),
     throttle=inngest.Throttle(
-        count=2, period=datetime.timedelta(minutes=1)
+        limit=2, period=datetime.timedelta(minutes=1)
     ),
     rate_limit=inngest.RateLimit(
         limit=1,
@@ -77,25 +77,27 @@ async def rag_query_pdf_ai(ctx: inngest.Context):
         "Answer concisely using the context above."
     )
 
-    adapter = ai.openai.Adapter(
-        auth_key=os.getenv("OPENAI_API_KEY"),
-        model="gpt-4o-mini"
-    )
+    def _generate_answer(user_content: str) -> str:
+        """Generate answer using Ollama chat completion"""
+        ollama_client = OllamaClient(host=os.getenv("OLLAMA_HOST", "http://localhost:11434"))
+        
+        messages = [
+            {"role": "system", "content": "You answer questions using only the provided context."},
+            {"role": "user", "content": user_content}
+        ]
+        
+        response = ollama_client.chat(
+            model=os.getenv("OLLAMA_MODEL", "llama3.1:8b"),
+            messages=messages,
+            options={
+                "temperature": 0.2,
+                "num_predict": 1024
+            }
+        )
+        
+        return response["message"]["content"].strip()
 
-    res = await ctx.step.ai.infer(
-        "llm-answer",
-        adapter=adapter,
-        body={
-            "max_tokens": 1024,
-            "temperature": 0.2,
-            "messages": [
-                {"role": "system", "content": "You answer questions using only the provided context."},
-                {"role": "user", "content": user_content}
-            ]
-        }
-    )
-
-    answer = res["choices"][0]["message"]["content"].strip()
+    answer = await ctx.step.run("llm-answer", lambda: _generate_answer(user_content))
     return {"answer": answer, "sources": found.sources, "num_contexts": len(found.contexts)}
 
 app = FastAPI()
